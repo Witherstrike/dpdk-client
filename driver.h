@@ -2,9 +2,6 @@
  * Copyright(c) 2010-2015 Intel Corporation
  */
 
-#ifndef YCSB_C_DRIVER_H_
-#define YCSB_C_DRIVER_H_
-
 extern "C" {
 #include <inttypes.h>
 #include <rte_cycles.h>
@@ -25,8 +22,6 @@ extern "C" {
 #include <thread>
 #include <vector>
 
-#include "flow_blocks.h"
-
 #define RX_RING_SIZE 1024
 #define TX_RING_SIZE 1024
 
@@ -46,34 +41,13 @@ class dpdk_driver {
 public:
   uint16_t nb_queues;
 
-  int init(int argc, char *argv[], int nb_threads = 1);
+  int init(int argc, char *argv[]);
 
-  void register_queue_id();
-  void register_dest_port();
-  uint16_t get_queue_id();
-  uint16_t get_dest_port();
-
-  uint16_t send_multi(uint16_t nb_packets, char **contexts, unsigned *nb_bytes, uint16_t send_no = 0, 
-                      uint16_t queue_id = 0);
-
-  void send_pkt(char *context, unsigned nb_bytes, uint16_t send_no = 0,
-                uint16_t queue_id = 0);
-
-  uint16_t recv_multi(uint16_t nb_packets, char **contexts, unsigned *nb_bytes, uint16_t *recv_no, 
-                      uint16_t queue_id = 0);
-
-  void recv_pkt(char *context, unsigned nb_bytes, uint16_t &recv_no,
-                uint16_t queue_id = 0);
-
-  void flow_init(uint16_t queue_id, uint16_t dest_port);
+  uint16_t send_multi(uint16_t nb_packets, char **contexts, unsigned *nb_bytes);
+  uint16_t recv_multi(char **contexts, unsigned *nb_bytes);
 
 private:
-  int port_init(uint16_t port, uint16_t rx_rings = 1, uint16_t tx_rings = 1);
+  int port_init(uint16_t port);
 
-  struct rte_mempool *mbuf_pool[MAX_QUEUE_NUM];
-  std::map<std::thread::id, uint16_t> map_queue_id;
-  std::map<std::thread::id, uint16_t> map_dest_port;
-  std::mutex mutex_;
+  struct rte_mempool *mbuf_pool;
 };
-
-#endif
