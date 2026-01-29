@@ -79,12 +79,13 @@ public:
     {
         auto it = available_task_ids.find(type);
         if (it == available_task_ids.end())
-            return std::list<task_id_t>();
-        auto end = it->begin() + std::min(it->size(), max_size);
+            return std::list<std::pair<task_id_t, task_id_seq_t>>();
+        auto type_available_task_ids = it->second;
+        auto end = std::next(type_available_task_ids.begin(), std::min(type_available_task_ids.size(), max_size));
         std::list<std::pair<task_id_t, task_id_seq_t>> res;
-        for (auto id_it = it->begin(); id_it != end; id_it++) 
+        for (auto id_it = type_available_task_ids.begin(); id_it != end; id_it++) 
             res.push_back(std::make_pair(*id_it, ++task_id_seq_nums.at(*id_it))); 
-        it->erase(it->begin(), end);
+        type_available_task_ids.erase(type_available_task_ids.begin(), end);
         return res;
     }
 
@@ -107,6 +108,8 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
                        uint32_t sip, uint32_t dip, uint8_t hops) {
 
 }
+
+int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -144,23 +147,26 @@ int main(int argc, char *argv[])
             switch (src_port) {
                 case UDP_SRC_PORT_PING:
                     // GENERATE PONG PACKET
-                    struct ping_payload_h *ping_payload = (struct ping_payload_h *)payload;
-                    send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
+                    {
+                        struct ping_payload_h *ping_payload = (struct ping_payload_h *)payload;
+                        send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
 
-                    build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
+                        build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
 
-                    send_size += 1;
+                        send_size += 1; 
+                    }
                     break;
-                case UDP_SRC_PORT_PONG:
-                    struct pong_payload_h *pong_payload = (struct pong_payload_h *)payload;
-                    uint16_t task_ID = rte_be_to_cpu_16(pong_payload->task_ID);
-                    uint64_t send_timestamp = task_send_timestamp[task_ID];
-                    uint64_t recv_timestamp = rte_rdtsc();
-                    printf("received pong packet of task %d, sent at  %lld, received at %lld, RTT %lld\n", 
-                        task_ID, send_timestamp, recv_timestamp, recv_timestamp - send_timestamp);
-                    manager.release_id(task_ID);
+                case UDP_SRC_PORT_PONG: 
+                    {
+                        struct pong_payload_h *pong_payload = (struct pong_payload_h *)payload;
+                        uint16_t task_ID = rte_be_to_cpu_16(pong_payload->task_ID);
+                        uint64_t send_timestamp = task_send_timestamp[task_ID];
+                        uint64_t recv_timestamp = rte_rdtsc();
+                        printf("received pong packet of task %d, sent at  %lu, received at %lu, RTT %lu\n", 
+                            task_ID, send_timestamp, recv_timestamp, recv_timestamp - send_timestamp);
+                        manager.release_id(task_ID);
+                    }
                     break;
-                default:
             }
 
             rte_pktmbuf_free(mbuf);
@@ -194,40 +200,6 @@ int main(int argc, char *argv[])
             fprintf(stderr, "WARNING: failed to send %d pakcets", send_size - nb_tx);
         }
     }
-}
-
-int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[])
-{
-    unsigned nb_ports;
-    uint16_t port = PORT_USED;
-    uint16_t q;
-
-    /* Initialize the Environment Abstraction Layer (EAL). */
-    int ret = rte_eal_init(argc, argv);
-    if (ret < 0)
-        rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
-
-    argc -= ret;
-    argv += ret;
-
-    nb_ports = rte_eth_dev_count_avail();
-
-    if (nb_ports < 1)
-        rte_exit(EXIT_FAILURE, "Error: number of ports must be greater than one\n");
-
-    /* Creates a new mempool in memory to hold the mbufs. */
-    mbuf_pool = rte_pktmbuf_pool_create(
-        (std::string("MBUF_POOL") + std::to_string(q)).c_str(), NUM_MBUFS,
-        MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
-
-    if (mbuf_pool == NULL)
-        rte_exit(EXIT_FAILURE, "Cannot create mbuf pool %" PRIu16 "\n", q);
-
-    /* Initialize all ports. */
-    if (port_init(mbuf_pool, port) != 0)
-        rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", port);
-
-    return ret;
 }
 
 int port_init(struct rte_mempool *mbuf_pool, uint16_t port)
@@ -298,4 +270,38 @@ int port_init(struct rte_mempool *mbuf_pool, uint16_t port)
     rte_eth_promiscuous_enable(port);
 
     return 0;
+}
+
+int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[])
+{
+    unsigned nb_ports;
+    uint16_t port = PORT_USED;
+    uint16_t q;
+
+    /* Initialize the Environment Abstraction Layer (EAL). */
+    int ret = rte_eal_init(argc, argv);
+    if (ret < 0)
+        rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
+
+    argc -= ret;
+    argv += ret;
+
+    nb_ports = rte_eth_dev_count_avail();
+
+    if (nb_ports < 1)
+        rte_exit(EXIT_FAILURE, "Error: number of ports must be greater than one\n");
+
+    /* Creates a new mempool in memory to hold the mbufs. */
+    mbuf_pool = rte_pktmbuf_pool_create(
+        (std::string("MBUF_POOL") + std::to_string(q)).c_str(), NUM_MBUFS,
+        MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
+
+    if (mbuf_pool == NULL)
+        rte_exit(EXIT_FAILURE, "Cannot create mbuf pool %" PRIu16 "\n", q);
+
+    /* Initialize all ports. */
+    if (port_init(mbuf_pool, port) != 0)
+        rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", port);
+
+    return ret;
 }
