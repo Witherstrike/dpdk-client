@@ -15,7 +15,6 @@ extern "C"
 #include <cstdlib>
 #include <map>
 #include <string>
-#include <thread>
 #include <vector>
 #include <list>
 
@@ -119,8 +118,15 @@ int main(int argc, char *argv[])
     task_manager<> manager;
     std::map<uint16_t, uint64_t> task_send_timestamp;
     std::vector<std::string> types{{"1"}, {"2"}, {"3"}};
-    std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks;
-
+    std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks{
+        {"1", {{1, 2, 3},    {4, 5, 6}}},
+        {"2", {{7, 8, 9},    {10, 11, 12}}},
+        {"3", {{13, 14, 15}, {16, 17, 18}}},
+    };
+    manager.register_task_type("1", 16, 1);
+    manager.register_task_type("2", 32, 2);
+    manager.register_task_type("3", 48, 1);
+    
     while (true)
     {
         // RECV
@@ -185,6 +191,7 @@ int main(int argc, char *argv[])
                 send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
 
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
+                printf("scheduled ping of ID %u, seq num %u, sip %u, dip %u, hops %u", task_ID, task_seq_num, sip, dip, hops);
 
                 send_size += 1;
             }

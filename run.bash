@@ -1,0 +1,1 @@
+sudo ./build/client -a 01:00.0
