@@ -79,7 +79,7 @@ public:
         auto it = available_task_ids.find(type);
         if (it == available_task_ids.end())
             return std::list<std::pair<task_id_t, task_id_seq_t>>();
-        auto type_available_task_ids = it->second;
+        auto &type_available_task_ids = it->second;
         auto end = std::next(type_available_task_ids.begin(), std::min(type_available_task_ids.size(), max_size));
         std::list<std::pair<task_id_t, task_id_seq_t>> res;
         for (auto id_it = type_available_task_ids.begin(); id_it != end; id_it++) 
@@ -108,12 +108,11 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
 
 }
 
-int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[]);
+struct rte_mempool *dpdk_init(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-    struct rte_mempool *mbuf_pool;
-    dpdk_init(mbuf_pool, argc, argv);
+    struct rte_mempool *mbuf_pool = dpdk_init(argc, argv);
 
     task_manager<> manager;
     std::map<uint16_t, uint64_t> task_send_timestamp;
@@ -140,7 +139,6 @@ int main(int argc, char *argv[])
 
         uint16_t nb_rx;
         nb_rx = rte_eth_rx_burst(PORT_USED, 0, recv_bufs, BURST_SIZE); 
-
         for (uint16_t i = 0; i < nb_rx; i++)
         {
             struct rte_mbuf *mbuf = recv_bufs[i];
@@ -191,7 +189,7 @@ int main(int argc, char *argv[])
                 send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
 
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
-                printf("scheduled ping of ID %u, seq num %u, sip %u, dip %u, hops %u", task_ID, task_seq_num, sip, dip, hops);
+                printf("scheduled ping of ID %u, seq num %u, sip %u, dip %u, hops %u\n", task_ID, task_seq_num, sip, dip, hops);
 
                 send_size += 1;
             }
@@ -279,8 +277,9 @@ int port_init(struct rte_mempool *mbuf_pool, uint16_t port)
     return 0;
 }
 
-int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[])
+struct rte_mempool *dpdk_init(int argc, char *argv[])
 {
+    struct rte_mempool *mbuf_pool;
     unsigned nb_ports;
     uint16_t port = PORT_USED;
     uint16_t q;
@@ -310,5 +309,5 @@ int dpdk_init(struct rte_mempool *mbuf_pool, int argc, char *argv[])
     if (port_init(mbuf_pool, port) != 0)
         rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", port);
 
-    return ret;
+    return mbuf_pool;
 }
