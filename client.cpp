@@ -100,12 +100,77 @@ public:
 
 void build_pong_packet(struct rte_mbuf *mbuf, struct rte_ether_hdr *ping_hdr_eth, struct rte_ipv4_hdr *ping_hdr_ip, 
                        struct rte_udp_hdr *ping_hdr_udp, struct ping_payload_h *ping_payload) {
+    struct rte_ether_hdr *hdr_eth;
+    struct rte_ipv4_hdr *hdr_ip;
+    struct rte_udp_hdr *hdr_udp;
+    struct pong_payload_h *payload;
 
+    payload = (struct pong_payload_h *)rte_pktmbuf_append(mbuf, sizeof(struct pong_payload_h));
+    memset(payload, 0, sizeof(struct pong_payload_h));
+    payload->task_ID = ping_payload->task_ID;
+    payload->task_start_tstamp = ping_payload->task_start_tstamp;
+
+    hdr_udp = (struct rte_udp_hdr *) rte_pktmbuf_prepend(mbuf, sizeof(struct rte_udp_hdr));
+    memset(hdr_udp, 0, sizeof(struct rte_udp_hdr));
+    hdr_udp->src_port = htons(1000);
+    hdr_udp->dst_port = htons(100); 
+    hdr_udp->dgram_len = htons(sizeof(struct pong_payload_h) + sizeof(struct rte_udp_hdr));
+    hdr_udp->dgram_cksum = 0;
+
+    hdr_ip = (struct rte_ipv4_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ipv4_hdr));
+    memset(hdr_ip, 0, sizeof(struct rte_ipv4_hdr));
+    hdr_ip->version_ihl = 0x45;
+    hdr_ip->total_length =
+        htons(sizeof(struct pong_payload_h) + sizeof(struct rte_udp_hdr) + sizeof(struct rte_ipv4_hdr));
+    hdr_ip->time_to_live = 64;
+    hdr_ip->next_proto_id = IPPROTO_UDP;
+    hdr_ip->src_addr = ping_hdr_ip->dst_addr;
+    hdr_ip->dst_addr = ping_hdr_ip->src_addr;
+
+    hdr_eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ether_hdr));
+    memset(hdr_eth, 0, sizeof(struct rte_ether_hdr));
+    hdr_eth->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+
+    hdr_udp->dgram_cksum = rte_ipv4_udptcp_cksum(hdr_ip, hdr_udp);
+    hdr_ip->hdr_checksum = rte_ipv4_cksum(hdr_ip);
 }
 
 void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_seq_num, 
-                       uint32_t sip, uint32_t dip, uint8_t hops) {
+                       uint32_t sip, uint32_t dip, uint8_t hops) {  
+    struct rte_ether_hdr *hdr_eth;
+    struct rte_ipv4_hdr *hdr_ip;
+    struct rte_udp_hdr *hdr_udp;
+    struct ping_payload_h *payload;
 
+    payload = (struct ping_payload_h *)rte_pktmbuf_append(mbuf, sizeof(struct ping_payload_h));
+    memset(payload, 0, sizeof(struct ping_payload_h));
+    payload->task_ID = htons(task_ID);
+    payload->task_start_tstamp = htonl(task_seq_num);
+    payload->hop_times = hops;
+
+    hdr_udp = (struct rte_udp_hdr *) rte_pktmbuf_prepend(mbuf, sizeof(struct rte_udp_hdr));
+    memset(hdr_udp, 0, sizeof(struct rte_udp_hdr));
+    hdr_udp->src_port = htons(100);
+    hdr_udp->dst_port = htons(1000); 
+    hdr_udp->dgram_len = htons(sizeof(struct ping_payload_h) + sizeof(struct rte_udp_hdr));
+    hdr_udp->dgram_cksum = 0;
+
+    hdr_ip = (struct rte_ipv4_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ipv4_hdr));
+    memset(hdr_ip, 0, sizeof(struct rte_ipv4_hdr));
+    hdr_ip->version_ihl = 0x45;
+    hdr_ip->total_length =
+        htons(sizeof(struct ping_payload_h) + sizeof(struct rte_udp_hdr) + sizeof(struct rte_ipv4_hdr));
+    hdr_ip->time_to_live = 64;
+    hdr_ip->next_proto_id = IPPROTO_UDP;
+    hdr_ip->src_addr = htonl(sip);
+    hdr_ip->dst_addr = htonl(dip);
+
+    hdr_eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ether_hdr));
+    memset(hdr_eth, 0, sizeof(struct rte_ether_hdr));
+    hdr_eth->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+
+    hdr_udp->dgram_cksum = rte_ipv4_udptcp_cksum(hdr_ip, hdr_udp);
+    hdr_ip->hdr_checksum = rte_ipv4_cksum(hdr_ip);
 }
 
 struct rte_mempool *dpdk_init(int argc, char *argv[]);
