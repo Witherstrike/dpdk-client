@@ -84,8 +84,10 @@ public:
         auto &type_available_task_ids = it->second;
         auto end = std::next(type_available_task_ids.begin(), std::min(type_available_task_ids.size(), max_size));
         std::list<std::pair<task_id_t, task_id_seq_t>> res;
-        for (auto id_it = type_available_task_ids.begin(); id_it != end; id_it++) 
+        for (auto id_it = type_available_task_ids.begin(); id_it != end; id_it++) {
             res.push_back(std::make_pair(*id_it, ++task_id_seq_nums.at(*id_it))); 
+            used_id_type.emplace(*id_it, type);
+        }
         type_available_task_ids.erase(type_available_task_ids.begin(), end);
         return res;
     }
