@@ -18,6 +18,8 @@ extern "C"
 #include <vector>
 #include <list>
 
+#include "task_loader.hpp"
+
 #define PORT_USED 0
 #define BURST_SIZE 32
 
@@ -174,26 +176,30 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
     hdr_ip->hdr_checksum = rte_ipv4_cksum(hdr_ip);
 }
 
-struct rte_mempool *dpdk_init(int argc, char *argv[]);
+int dpdk_init(struct rte_mempool *&mbuf_pool, int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-    struct rte_mempool *mbuf_pool = dpdk_init(argc, argv);
+    struct rte_mempool *mbuf_pool;
+    int ret = dpdk_init(mbuf_pool, argc, argv);
+
+    argc -= ret;
+    argv += ret;
+
+    std::string tasks_path("tasks/1.task");
+    std::string config_path("tasks/1.config");
+    if (argc > 1)
+        tasks_path = argv[1];
+    if (argc > 2)
+        config_path = argv[2];
 
     task_manager<> manager;
     std::map<uint16_t, uint64_t> task_send_timestamp;
-    std::vector<std::string> types{{"1"}};
 
-    /* std::list<std::tuple<uint32_t, uint32_t, uint8_t>> type1_task;
-    for(int i = 0; i < 100; i++) 
-        type1_task.push_back(std::make_tuple(0x0A000001, 0x0A000002, 1)); */
-    std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks{
-        {"1", {{0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}}}
-    };
-    /* std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks;
-    tasks.emplace("1", type1_task); */
-
-    manager.register_task_type("1", 0, 100);
+    std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks = load_tasks(tasks_path);
+    std::vector<std::tuple<std::string, uint16_t, uint16_t>> type_config = load_config(config_path);
+    for (auto [type, start, max_jobs] : type_config) 
+        manager.register_task_type(type, start, max_jobs);
     
     while (true)
     {
@@ -222,10 +228,12 @@ int main(int argc, char *argv[])
                     // GENERATE PONG PACKET
                     {
                         struct ping_payload_h *ping_payload = (struct ping_payload_h *)payload;
+
+                        uint16_t task_ID = rte_be_to_cpu_16(ping_payload->task_ID);
+                        printf("received ping packet of task %d, scheduled pong packet\n", task_ID);
+
                         send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
-
                         build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
-
                         send_size += 1; 
                     }
                     break;
@@ -247,8 +255,7 @@ int main(int argc, char *argv[])
 
         // SEND
         std::list<uint32_t> send_ids;
-        for (auto type : types) {
-            std::list<std::tuple<uint32_t, uint32_t, uint8_t>> &type_tasks = tasks.at(type);
+        for (auto &[type, type_tasks] : tasks) {
             std::list<std::pair<uint16_t, uint32_t>> available_ids = manager.schedule(type, type_tasks.size());
             for (auto [task_ID, task_seq_num] : available_ids) {
                 send_ids.push_back(task_ID);
@@ -258,7 +265,7 @@ int main(int argc, char *argv[])
                 send_bufs[send_size] = rte_pktmbuf_alloc(mbuf_pool);
 
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
-                printf("scheduled ping of ID %u, seq num %u, sip %u, dip %u, hops %u\n", task_ID, task_seq_num, sip, dip, hops);
+                printf("scheduled ping packet of ID %u, seq num %u, sip %u, dip %u, hops %u\n", task_ID, task_seq_num, sip, dip, hops);
 
                 send_size += 1;
             }
@@ -346,9 +353,8 @@ int port_init(struct rte_mempool *mbuf_pool, uint16_t port)
     return 0;
 }
 
-struct rte_mempool *dpdk_init(int argc, char *argv[])
+int dpdk_init(struct rte_mempool *&mbuf_pool, int argc, char *argv[])
 {
-    struct rte_mempool *mbuf_pool;
     unsigned nb_ports;
     uint16_t port = PORT_USED;
     uint16_t q;
@@ -357,9 +363,6 @@ struct rte_mempool *dpdk_init(int argc, char *argv[])
     int ret = rte_eal_init(argc, argv);
     if (ret < 0)
         rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
-
-    argc -= ret;
-    argv += ret;
 
     nb_ports = rte_eth_dev_count_avail();
 
@@ -378,5 +381,5 @@ struct rte_mempool *dpdk_init(int argc, char *argv[])
     if (port_init(mbuf_pool, port) != 0)
         rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", port);
 
-    return mbuf_pool;
+    return ret;
 }
