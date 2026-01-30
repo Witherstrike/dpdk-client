@@ -125,7 +125,7 @@ void build_pong_packet(struct rte_mbuf *mbuf, struct rte_ether_hdr *ping_hdr_eth
     hdr_ip->total_length =
         htons(sizeof(struct pong_payload_h) + sizeof(struct rte_udp_hdr) + sizeof(struct rte_ipv4_hdr));
     hdr_ip->time_to_live = 64;
-    hdr_ip->next_proto_id = IPPROTO_UDP;
+    hdr_ip->next_proto_id = 100;
     hdr_ip->src_addr = ping_hdr_ip->dst_addr;
     hdr_ip->dst_addr = ping_hdr_ip->src_addr;
 
