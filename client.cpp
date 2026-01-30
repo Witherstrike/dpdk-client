@@ -98,6 +98,7 @@ public:
         if (it == used_id_type.end())
             return;
         std::string type = it->second;
+        used_id_type.erase(it);
         available_task_ids.at(type).push_back(task_id);
     }
 };
