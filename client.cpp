@@ -161,13 +161,14 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
     hdr_ip->total_length =
         htons(sizeof(struct ping_payload_h) + sizeof(struct rte_udp_hdr) + sizeof(struct rte_ipv4_hdr));
     hdr_ip->time_to_live = 64;
-    hdr_ip->next_proto_id = IPPROTO_UDP;
+    hdr_ip->next_proto_id = 16;
     hdr_ip->src_addr = htonl(sip);
     hdr_ip->dst_addr = htonl(dip);
 
     hdr_eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ether_hdr));
     memset(hdr_eth, 0, sizeof(struct rte_ether_hdr));
     hdr_eth->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+    hdr_eth->src_addr =  (struct rte_ether_addr){ .addr_bytes = {0x04,0x42,0x1a,0x08,0x87,0xf0} };
 
     hdr_udp->dgram_cksum = rte_ipv4_udptcp_cksum(hdr_ip, hdr_udp);
     hdr_ip->hdr_checksum = rte_ipv4_cksum(hdr_ip);
@@ -181,15 +182,18 @@ int main(int argc, char *argv[])
 
     task_manager<> manager;
     std::map<uint16_t, uint64_t> task_send_timestamp;
-    std::vector<std::string> types{{"1"}, {"2"}, {"3"}};
+    std::vector<std::string> types{{"1"}};
+
+    /* std::list<std::tuple<uint32_t, uint32_t, uint8_t>> type1_task;
+    for(int i = 0; i < 100; i++) 
+        type1_task.push_back(std::make_tuple(0x0A000001, 0x0A000002, 1)); */
     std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks{
-        {"1", {{1, 2, 3},    {4, 5, 6}}},
-        {"2", {{7, 8, 9},    {10, 11, 12}}},
-        {"3", {{13, 14, 15}, {16, 17, 18}}},
+        {"1", {{0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}, {0x0A000001, 0x0A000002, 1}}}
     };
-    manager.register_task_type("1", 16, 1);
-    manager.register_task_type("2", 32, 2);
-    manager.register_task_type("3", 48, 1);
+    /* std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks;
+    tasks.emplace("1", type1_task); */
+
+    manager.register_task_type("1", 0, 100);
     
     while (true)
     {
