@@ -226,7 +226,8 @@ static int port_worker(void *arg)
             if (src_port == UDP_SRC_PORT_PING) {
                 auto *ping_payload = (struct ping_payload_h *)payload;
                 uint16_t task_ID = rte_be_to_cpu_16(ping_payload->task_ID);
-                printf("[port %u] recv ping task %u -> schedule pong\n", ctx->port_id, task_ID);
+                uint32_t task_seq_num = rte_be_to_cpu_32(ping_payload->task_start_tstamp);
+                printf("[port %u] recv ping task %u seq %u, schedule pong\n", ctx->port_id, task_ID, task_seq_num);
 
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
@@ -234,6 +235,7 @@ static int port_worker(void *arg)
             } else if (src_port == UDP_SRC_PORT_PONG) {
                 auto *pong_payload = (struct pong_payload_h *)payload;
                 uint16_t task_ID = rte_be_to_cpu_16(pong_payload->task_ID);
+                uint32_t task_seq_num = rte_be_to_cpu_32(pong_payload->task_start_tstamp);
 
                 uint64_t recv_timestamp = rte_rdtsc();
                 uint64_t send_timestamp = 0;
@@ -245,8 +247,8 @@ static int port_worker(void *arg)
                 ctx->shared->manager->release_id(task_ID);
                 rte_spinlock_unlock(&ctx->shared->lock);
 
-                printf("[port %u] recv pong task %u, sent %lu recv %lu rtt %lu\n",
-                       ctx->port_id, task_ID, send_timestamp, recv_timestamp,
+                printf("[port %u] recv pong task %u seq %u, sent at %lu, recv at %lu, rtt %lu\n",
+                       ctx->port_id, task_ID, task_seq_num, send_timestamp, recv_timestamp,
                        (send_timestamp ? (recv_timestamp - send_timestamp) : 0UL));
             }
 
@@ -271,7 +273,7 @@ static int port_worker(void *arg)
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
 
-                printf("[port %u] schedule ping id %u seq %u sip %u dip %u hops %u\n",
+                printf("[port %u] schedule ping task %u seq %u sip %u dip %u hops %u\n",
                        ctx->port_id, task_ID, task_seq_num, sip, dip, hops);
 
                 send_ids.push_back(task_ID);
