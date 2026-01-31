@@ -12,7 +12,6 @@ extern "C"
 #include <stdint.h>
 #include <unistd.h>
 #include <rte_launch.h>
-#include <rte_spinlock.h>
 }
 #include <cstdlib>
 #include <map>
@@ -187,18 +186,14 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
 
 int dpdk_init(struct rte_mempool *&mbuf_pool, int argc, char *argv[]);
 
-struct shared_state {
-    task_manager<> *manager;
-    std::map<uint16_t, uint64_t> *task_send_timestamp;
-    rte_spinlock_t lock;
-};
-
 struct port_ctx {
     uint16_t port_id;
     uint16_t queue_id;
     rte_mempool *mbuf_pool;
 
-    shared_state *shared;
+    task_manager<> *manager;
+    std::map<uint16_t, uint64_t> task_send_timestamp;
+    std::vector<uint64_t> rtts;
 
     // 每口独立任务队列
     std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks;
@@ -227,7 +222,7 @@ static int port_worker(void *arg)
                 auto *ping_payload = (struct ping_payload_h *)payload;
                 uint16_t task_ID = rte_be_to_cpu_16(ping_payload->task_ID);
                 uint32_t task_seq_num = rte_be_to_cpu_32(ping_payload->task_start_tstamp);
-                printf("[port %u] recv ping task %u seq %u, schedule pong\n", ctx->port_id, task_ID, task_seq_num);
+                // printf("[port %u] recv ping task %u seq %u, schedule pong\n", ctx->port_id, task_ID, task_seq_num);
 
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
@@ -240,16 +235,16 @@ static int port_worker(void *arg)
                 uint64_t recv_timestamp = rte_rdtsc();
                 uint64_t send_timestamp = 0;
 
-                rte_spinlock_lock(&ctx->shared->lock);
-                auto &ts = *ctx->shared->task_send_timestamp;
+                auto &ts = ctx->task_send_timestamp;
                 auto it = ts.find(task_ID);
                 if (it != ts.end()) send_timestamp = it->second;
-                ctx->shared->manager->release_id(task_ID);
-                rte_spinlock_unlock(&ctx->shared->lock);
+                ctx->manager->release_id(task_ID);
+                ts.erase(task_ID);
 
-                printf("[port %u] recv pong task %u seq %u, sent at %lu, recv at %lu, rtt %lu\n",
+                /* printf("[port %u] recv pong task %u seq %u, sent at %lu, recv at %lu, rtt %lu\n",
                        ctx->port_id, task_ID, task_seq_num, send_timestamp, recv_timestamp,
-                       (send_timestamp ? (recv_timestamp - send_timestamp) : 0UL));
+                       (send_timestamp ? (recv_timestamp - send_timestamp) : 0UL)); */
+                ctx->rtts.push_back(recv_timestamp - send_timestamp);
             }
 
             rte_pktmbuf_free(mbuf);
@@ -257,12 +252,12 @@ static int port_worker(void *arg)
 
         std::list<uint16_t> send_ids;
 
+        bool tasks_completed = true;
         for (auto &[type, type_tasks] : ctx->tasks) {
             if (type_tasks.empty()) continue;
+            tasks_completed = false;
 
-            rte_spinlock_lock(&ctx->shared->lock);
-            auto ids = ctx->shared->manager->schedule(type, type_tasks.size());
-            rte_spinlock_unlock(&ctx->shared->lock);
+            auto ids = ctx->manager->schedule(type, type_tasks.size());
 
             for (auto [task_ID, task_seq_num] : ids) {
                 if (type_tasks.empty() || send_size == BURST_SIZE) break;
@@ -273,8 +268,8 @@ static int port_worker(void *arg)
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
 
-                printf("[port %u] schedule ping task %u seq %u sip %u dip %u hops %u\n",
-                       ctx->port_id, task_ID, task_seq_num, sip, dip, hops);
+                /* printf("[port %u] schedule ping task %u seq %u sip %u dip %u hops %u\n",
+                    ctx->port_id, task_ID, task_seq_num, sip, dip, hops); */
 
                 send_ids.push_back(task_ID);
                 send_size++;
@@ -286,17 +281,20 @@ static int port_worker(void *arg)
             uint16_t nb_tx = rte_eth_tx_burst(ctx->port_id, ctx->queue_id, send_bufs, send_size);
             uint64_t send_timestamp = rte_rdtsc();
 
-            rte_spinlock_lock(&ctx->shared->lock);
             for (auto id : send_ids)
-                (*ctx->shared->task_send_timestamp)[id] = send_timestamp;
-            rte_spinlock_unlock(&ctx->shared->lock);
+                (ctx->task_send_timestamp)[id] = send_timestamp;
 
             if (unlikely(nb_tx < send_size)) {
                 for (uint16_t b = nb_tx; b < send_size; b++)
                     rte_pktmbuf_free(send_bufs[b]);
-                fprintf(stderr, "[port %u] WARNING: failed to send %u packets\n",
-                        ctx->port_id, (unsigned)(send_size - nb_tx));
+                /* fprintf(stderr, "[port %u] WARNING: failed to send %u packets\n",
+                        ctx->port_id, (unsigned)(send_size - nb_tx)); */
             }
+        }
+
+        if (tasks_completed == true && ctx->task_send_timestamp.empty()) {
+            for (auto rtt : ctx->rtts)
+                printf("%lu\n", rtt);
         }
     }
     return 0;
@@ -313,28 +311,31 @@ int main(int argc, char *argv[])
     // 两个端口各自的 task 文件
     std::string tasks_path0("tasks/0.task");
     std::string tasks_path1("tasks/1.task");
-    std::string config_path("tasks/1.config");
+    std::string config_path0("tasks/0.config");
+    std::string config_path1("tasks/1.config");
 
     if (argc > 1) tasks_path0 = argv[1];
     if (argc > 2) tasks_path1 = argv[2];
-    if (argc > 3) config_path = argv[3];
+    if (argc > 3) config_path0 = argv[3];
+    if (argc > 4) config_path1 = argv[3];
 
-    task_manager<> manager;
-    std::map<uint16_t, uint64_t> task_send_timestamp;
+    task_manager<> manager0;
+    task_manager<> manager1;
 
     auto tasks0 = load_tasks(tasks_path0);
     auto tasks1 = load_tasks(tasks_path1);
 
-    auto type_config = load_config(config_path);
-    for (auto [type, start, max_jobs] : type_config)
-        manager.register_task_type(type, start, max_jobs);
-
-    shared_state shared{&manager, &task_send_timestamp};
-    rte_spinlock_init(&shared.lock);
+    auto type_config0 = load_config(config_path0);
+    for (auto [type, start, max_jobs] : type_config0)
+        manager0.register_task_type(type, start, max_jobs);
+    
+    auto type_config1 = load_config(config_path1);
+    for (auto [type, start, max_jobs] : type_config1)
+        manager1.register_task_type(type, start, max_jobs);
 
     static port_ctx ctx0, ctx1;
-    ctx0 = {PORT0, 0, mbuf_pool, &shared, std::move(tasks0)};
-    ctx1 = {PORT1, 0, mbuf_pool, &shared, std::move(tasks1)};
+    ctx0 = {PORT0, 0, mbuf_pool, &manager0, std::map<uint16_t, uint64_t>(), std::vector<uint64_t>(), std::move(tasks0)};
+    ctx1 = {PORT1, 0, mbuf_pool, &manager1, std::map<uint16_t, uint64_t>(), std::vector<uint64_t>(), std::move(tasks1)};
 
     unsigned main_lcore = rte_lcore_id();
     unsigned lcore0 = rte_get_next_lcore(main_lcore, 1, 0);
