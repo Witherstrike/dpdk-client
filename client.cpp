@@ -180,7 +180,6 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
     hdr_eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ether_hdr));
     memset(hdr_eth, 0, sizeof(struct rte_ether_hdr));
     hdr_eth->ether_type = htons(RTE_ETHER_TYPE_IPV4);
-    hdr_eth->src_addr =  (struct rte_ether_addr){ .addr_bytes = {0x04,0x42,0x1a,0x08,0x87,0xf0} };
 
     hdr_udp->dgram_cksum = rte_ipv4_udptcp_cksum(hdr_ip, hdr_udp);
     hdr_ip->hdr_checksum = rte_ipv4_cksum(hdr_ip);
