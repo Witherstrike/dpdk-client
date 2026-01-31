@@ -203,6 +203,7 @@ static int port_worker(void *arg)
 {
     auto *ctx = static_cast<port_ctx*>(arg);
 
+    bool rtt_output = true;
     while (true) {
         struct rte_mbuf *recv_bufs[BURST_SIZE];
         struct rte_mbuf *send_bufs[BURST_SIZE];
@@ -292,9 +293,10 @@ static int port_worker(void *arg)
             }
         }
 
-        if (tasks_completed == true && ctx->task_send_timestamp.empty()) {
+        if (rtt_output && tasks_completed == true && ctx->task_send_timestamp.empty()) {
             for (auto rtt : ctx->rtts)
                 printf("%lu\n", rtt);
+            rtt_output = false;
         }
     }
     return 0;
