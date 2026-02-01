@@ -186,6 +186,12 @@ void build_ping_packet(struct rte_mbuf *mbuf, uint16_t task_ID, uint32_t task_se
 
 int dpdk_init(struct rte_mempool *&mbuf_pool, int argc, char *argv[]);
 
+struct recv_data_t {
+    uint16_t task_ID;
+    uint32_t task_seq_num;
+    uint64_t rtt;
+};
+
 struct port_ctx {
     uint16_t port_id;
     uint16_t queue_id;
@@ -193,9 +199,8 @@ struct port_ctx {
 
     task_manager<> *manager;
     std::map<uint16_t, uint64_t> task_send_timestamp;
-    std::vector<uint64_t> rtts;
+    std::vector<recv_data_t> recv_datas;
 
-    // 每口独立任务队列
     std::map<std::string, std::list<std::tuple<uint32_t, uint32_t, uint8_t>>> tasks;
 };
 
@@ -223,7 +228,6 @@ static int port_worker(void *arg)
                 auto *ping_payload = (struct ping_payload_h *)payload;
                 uint16_t task_ID = rte_be_to_cpu_16(ping_payload->task_ID);
                 uint32_t task_seq_num = rte_be_to_cpu_32(ping_payload->task_start_tstamp);
-                // printf("[port %u] recv ping task %u seq %u, schedule pong\n", ctx->port_id, task_ID, task_seq_num);
 
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_pong_packet(send_bufs[send_size], hdr_eth, hdr_ip, hdr_udp, ping_payload);
@@ -242,10 +246,7 @@ static int port_worker(void *arg)
                 ctx->manager->release_id(task_ID);
                 ts.erase(task_ID);
 
-                /* printf("[port %u] recv pong task %u seq %u, sent at %lu, recv at %lu, rtt %lu\n",
-                       ctx->port_id, task_ID, task_seq_num, send_timestamp, recv_timestamp,
-                       (send_timestamp ? (recv_timestamp - send_timestamp) : 0UL)); */
-                ctx->rtts.push_back(recv_timestamp - send_timestamp);
+                ctx->recv_datas.push_back({task_ID, task_seq_num, recv_timestamp - send_timestamp});
             }
 
             rte_pktmbuf_free(mbuf);
@@ -269,9 +270,6 @@ static int port_worker(void *arg)
                 send_bufs[send_size] = rte_pktmbuf_alloc(ctx->mbuf_pool);
                 build_ping_packet(send_bufs[send_size], task_ID, task_seq_num, sip, dip, hops);
 
-                /* printf("[port %u] schedule ping task %u seq %u sip %u dip %u hops %u\n",
-                    ctx->port_id, task_ID, task_seq_num, sip, dip, hops); */
-
                 send_ids.push_back(task_ID);
                 send_size++;
             }
@@ -288,14 +286,12 @@ static int port_worker(void *arg)
             if (unlikely(nb_tx < send_size)) {
                 for (uint16_t b = nb_tx; b < send_size; b++)
                     rte_pktmbuf_free(send_bufs[b]);
-                /* fprintf(stderr, "[port %u] WARNING: failed to send %u packets\n",
-                        ctx->port_id, (unsigned)(send_size - nb_tx)); */
             }
         }
 
         if (rtt_output && tasks_completed == true && ctx->task_send_timestamp.empty()) {
-            for (auto rtt : ctx->rtts)
-                printf("%lu\n", rtt);
+            for (auto recv_data : ctx->recv_datas)
+                printf("ID %u seq %u rtt %lu\n", recv_data.task_ID, recv_data.task_seq_num, recv_data.rtt);
             rtt_output = false;
         }
     }
@@ -336,8 +332,8 @@ int main(int argc, char *argv[])
         manager1.register_task_type(type, start, max_jobs);
 
     static port_ctx ctx0, ctx1;
-    ctx0 = {PORT0, 0, mbuf_pool, &manager0, std::map<uint16_t, uint64_t>(), std::vector<uint64_t>(), std::move(tasks0)};
-    ctx1 = {PORT1, 0, mbuf_pool, &manager1, std::map<uint16_t, uint64_t>(), std::vector<uint64_t>(), std::move(tasks1)};
+    ctx0 = {PORT0, 0, mbuf_pool, &manager0, std::map<uint16_t, uint64_t>(), std::vector<recv_data_t>(), std::move(tasks0)};
+    ctx1 = {PORT1, 0, mbuf_pool, &manager1, std::map<uint16_t, uint64_t>(), std::vector<recv_data_t>(), std::move(tasks1)};
 
     unsigned main_lcore = rte_lcore_id();
     unsigned lcore0 = rte_get_next_lcore(main_lcore, 1, 0);
